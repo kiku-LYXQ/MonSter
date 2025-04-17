@@ -6,7 +6,7 @@ import torch.optim as optim
 # from util import InputPadder
 from core.utils.utils import InputPadder
 from core.monster import Monster 
-from omegaconf import OmegaConf
+from omegaconf import OmegaConf # OmegaConf 是一个专为层次化配置管理 设计的 Python 库，由 Facebook（现 Meta）开发，主要用于简化复杂应用（如机器学习实验）的配置管理。它是 Hydra 框架的核心依赖，支持 YAML 文件解析、动态配置合并和类型安全访问。
 import torch.nn.functional as F
 from accelerate import Accelerator
 import core.stereo_datasets as datasets
@@ -19,7 +19,7 @@ from accelerate.utils import DistributedDataParallelKwargs
 import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
-import wandb
+import wandb # 专为机器学习研发设计的实验跟踪、数据可视化与协作平台。它帮助开发者和团队高效管理训练过程、记录超参数、监控模型性能，并支持结果的可视化分析与共享。
 from pathlib import Path
 
 def check_nan(layer, input, output):
