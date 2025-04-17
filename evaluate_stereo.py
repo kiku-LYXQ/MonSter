@@ -8,10 +8,11 @@ import logging
 import numpy as np
 import torch
 from tqdm import tqdm
-from monster import Monster, autocast
+# add prefix core
+from core.monster import Monster, autocast
 
-import stereo_datasets as datasets
-from utils.utils import InputPadder
+import core.stereo_datasets as datasets
+from core.utils.utils import InputPadder
 from PIL import Image
 import torch.nn.functional as F
 

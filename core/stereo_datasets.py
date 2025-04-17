@@ -190,17 +190,57 @@ class SceneFlowDatasets(StereoDataset):
 
 
 class ETH3D(StereoDataset):
-    def __init__(self, aug_params=None, root='/data2/cjd/StereoDatasets/eth3d', split='training'):
-        super(ETH3D, self).__init__(aug_params, sparse=True)
-        assert os.path.exists(root)
+    def __init__(self, aug_params=None, root='/home/lxy/dataset/ETH3D', split='training'):
+        """
+                ETH3D 数据集加载类（专用于双视图立体匹配任务）
 
-        image1_list = sorted( glob(osp.join(root, f'two_view_{split}/*/im0.png')) )
-        image2_list = sorted( glob(osp.join(root, f'two_view_{split}/*/im1.png')) )
+                参数说明：
+                - aug_params: 数据增强参数（继承自父类 StereoDataset）
+                - root: 数据集根目录（对应图片中下载的所有数据存放路径） 绝对路径
+                - split: 数据集划分，可选 'training' 或 'test'
+        """
+        # 初始化父类 StereoDataset，设置稀疏视差（sparse=True 表示真值视差可能不连续）
+        super(ETH3D, self).__init__(aug_params, sparse=True)
+        # 调试代码：打印实际检查的路径和是否存在
+        print("[Debug] 检查的绝对路径:", root)
+        print("[Debug] 路径是否存在:", os.path.exists(root))
+        assert os.path.exists(root), f"数据集路径 {root} 不存在，请检查下载路径"
+
+        # ------------------------------
+        # 加载双视图图像对
+        # ------------------------------
+        # 对应图片中的 "Download all undistorted.jpg images(13.6 MB)"
+        # 路径结构：two_view_{split}/场景名/im0.png (左视图), im1.png (右视图)
+        image1_list = sorted( glob(osp.join(root, f'two_view_{split}/*/im0.png')) )   # 左视图列表
+        image2_list = sorted( glob(osp.join(root, f'two_view_{split}/*/im1.png')) )   # 右视图列表
+
+        # ------------------------------
+        # 加载视差真值（仅训练集有公开真值）
+        # ------------------------------
+        # 对应图片中的 "Download all ground truth (1.8 GB)"
+        # 测试集真值未公开，使用占位符（playground_1l 的视差文件）
+        # 实际评估需通过 ETH3D 官方提交系统
+        # 测试集真值未公开，使用占位符（playground_1l 的视差文件）
+        # 实际评估需通过 ETH3D 官方提交系统
         disp_list = sorted( glob(osp.join(root, 'two_view_training_gt/*/disp0GT.pfm')) ) if split == 'training' else [osp.join(root, 'two_view_training_gt/playground_1l/disp0GT.pfm')] * len(image1_list)
 
+        # ------------------------------
+        # 存储数据路径到列表
+        # ------------------------------
+        # 初始化存储容器（继承自 StereoDataset）
+        # self.image_list = []  # 存储图像对路径，格式 [[左图1, 右图1], [左图2, 右图2], ...]
+        # self.disparity_list = []  # 存储视差真值路径，格式 [视差1, 视差2, ...]
+
+        # 遍历每个场景的数据路径
         for img1, img2, disp in zip(image1_list, image2_list, disp_list):
-            self.image_list += [ [img1, img2] ]
-            self.disparity_list += [ disp ]
+            self.image_list += [ [img1, img2] ]  # 添加当前场景的图像对
+            self.disparity_list += [ disp ]      # 添加当前场景的视差真值
+
+        # ------------------------------
+        # 注意事项
+        # ------------------------------
+        # 1. 代码未使用图片中提到的遮挡文件（1.2 GB），若需使用需手动加载并处理遮挡掩膜
+        # 2. "distorted" 数据（4.7 GB/12.1 GB）未使用，仅处理未失真图像
 
 class SintelStereo(StereoDataset):
     def __init__(self, aug_params=None, root='datasets/SintelStereo'):
