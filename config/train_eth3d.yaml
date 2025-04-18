@@ -31,7 +31,7 @@ save_frequency: 2500 # 模型保存间隔（每2500步保存一次）
 save_path: './checkpoints/eth3d/' # 模型检查点保存路径
 val_frequency: 2500 # 验证间隔（每2500步验证一次）
 image_size: [320, 736] # 输入图像尺寸（高度，宽度） 训练？
-train_iters: 21 # 前向传播迭代次数（循环网络特性）
+train_iters: 21 # 前向传播迭代次数（循环网络特性） 训练时
 valid_iters: 32 # 验证时的前向传播迭代次数
 val_dataset: 'kitti' # 验证集名称（KITTI基准）
 corr_implementation: "reg" # 相关性计算实现方式（正则化方法）

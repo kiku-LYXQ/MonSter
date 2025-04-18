@@ -351,8 +351,11 @@ class Monster(nn.Module):
     def forward(self, image1, image2, iters=12, flow_init=None, test_mode=False):
         """ Estimate disparity between pair of frames """
 
+        # 图像归一化处理：将像素值从[0,255]线性变换到[-1,1]并确保内存连续
         image1 = (2 * (image1 / 255.0) - 1.0).contiguous()
         image2 = (2 * (image2 / 255.0) - 1.0).contiguous()
+
+        # 使用Momo encoder进行编码
         with torch.autocast(device_type='cuda', dtype=torch.float32): 
             depth_mono, features_mono_left,  features_mono_right = self.infer_mono(image1, image2)
 

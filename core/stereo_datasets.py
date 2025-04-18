@@ -353,16 +353,16 @@ class TartanAir(StereoDataset):
             self.disparity_list += [ disp ]
 
 class KITTI(StereoDataset):
-    def __init__(self, aug_params=None, root='/data2/cjd/StereoDatasets/kitti/2015', image_set='training'):
+    def __init__(self, aug_params=None, root='/home/lxy/dataset/kitti/stereo/2015', image_set='training'):
         super(KITTI, self).__init__(aug_params, sparse=True, reader=frame_utils.readDispKITTI)
         assert os.path.exists(root)
 
-        root_12 = '/data2/cjd/StereoDatasets/kitti/2012/'
+        root_12 = '/home/lxy/dataset/kitti/stereo/2012/'
         image1_list = sorted(glob(os.path.join(root_12, image_set, 'colored_0/*_10.png'))) # 添加2012右视图
         image2_list = sorted(glob(os.path.join(root_12, image_set, 'colored_1/*_10.png'))) # 添加2012右视图
         disp_list = sorted(glob(os.path.join(root_12, 'training', 'disp_occ/*_10.png'))) if image_set == 'training' else [osp.join(root, 'training/disp_occ/000085_10.png')]*len(image1_list) #训练模式全部训练样本，其它模式固定样本
 
-        root_15 = '/data2/cjd/StereoDatasets/kitti/2015/'
+        root_15 = '/home/lxy/dataset/kitti/stereo/2015/'
         image1_list += sorted(glob(os.path.join(root_15, image_set, 'image_2/*_10.png'))) # 添加2015左视图
         image2_list += sorted(glob(os.path.join(root_15, image_set, 'image_3/*_10.png'))) # 添加2015右视图
         disp_list += sorted(glob(os.path.join(root_15, 'training', 'disp_occ_0/*_10.png'))) if image_set == 'training' else [osp.join(root, 'training/disp_occ_0/000085_10.png')]*len(image1_list)

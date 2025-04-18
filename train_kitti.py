@@ -129,7 +129,8 @@ def main(cfg):
     while should_keep_training:
         active_train_loader = train_loader
         model.train()
-        model.module.freeze_bn()
+        # model.module.freeze_bn()
+        model.freeze_bn()
         for data in tqdm(active_train_loader, dynamic_ncols=True, disable=not accelerator.is_main_process):
             _, left, right, disp_gt, valid = [x for x in data]
             with accelerator.autocast():
@@ -199,7 +200,8 @@ def main(cfg):
                     accelerator.log({'val/epe': total_epe / elem_num, 'val/d1': 100 * total_out / elem_num}, total_step)
 
                 model.train()
-                model.module.freeze_bn()
+                # model.module.freeze_bn()
+                model.freeze_bn()
 
             if total_step == cfg.total_step:
                 should_keep_training = False

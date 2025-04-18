@@ -157,6 +157,8 @@ def main(cfg):
     accelerator.init_trackers(project_name=cfg.project_name, config=OmegaConf.to_container(cfg, resolve=True), init_kwargs={'wandb': cfg.wandb})
 
     # 数据准备阶段
+    # 原始数据 → Dataset(单样本处理) → DataLoader(批量加载) → 模型训练
+    #              ↳ 数据增强、格式转换    ↳ 打乱、并行化、内存优化
     train_dataset = datasets.fetch_dataloader(cfg) # 获取训练数据集
     # batch_size=cfg.batch_size//cfg.num_gpu,  # 单卡实际batch大小
     # pin_memory=True,  # 启用内存锁页加速数据传输
@@ -211,6 +213,12 @@ def main(cfg):
         active_train_loader = train_loader
 
         model.train()
+        #为什么要freeze BN层
+        # BN层在CNN网络中大量使用，可以看上面bn层的操作，
+        # 第一步是计算当前batch的均值和方差，也就是bn依赖于均值和方差，
+        # 如果batch_size太小，计算一个小batch_size的均值和方差，肯定没有计算大的batch_size的均值和方差稳定和有意义，
+        # 这个时候，还不如不使用bn层，因此可以将bn层冻结。
+        # 另外，我们使用的网络，几乎都是在imagenet上pre-trained，完全可以使用在imagenet上学习到的参数。
         model.module.freeze_bn() # 冻结BatchNorm统计量（常用技巧）
 
         # 批次迭代
