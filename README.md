@@ -56,7 +56,7 @@ pip install gradio_imageslider
 pip install gradio==4.29.0
 pip install opt-einsum
 pip install wandb # 记录训练数据
-pip install hydra # 管理yaml参数
+pip install hydra-core # 管理yaml参数
 pip install omegaconf
 ```
 

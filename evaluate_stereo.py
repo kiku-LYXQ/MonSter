@@ -51,48 +51,85 @@ def count_parameters(model):
 @torch.no_grad()
 def validate_eth3d(model, iters=32, mixed_prec=False):
     """ Peform validation using the ETH3D (train) split """
-    model.eval()
-    aug_params = {}
-    val_dataset = datasets.ETH3D(aug_params)
+    """ 
+        使用ETH3D训练分割进行验证（注意：这里可能实际使用验证集）
 
+        参数：
+            model: 待验证的立体匹配模型
+            iters: 迭代优化次数（影响模型推理精度）
+            mixed_prec: 是否启用混合精度推理（节省显存加速计算）
+        返回：
+            包含EPE和D1指标的字典
+    """
+    # 模型切换到评估模式（关闭Dropout/BatchNorm等训练专用层）
+    model.eval()
+    aug_params = {} # 初始化数据增强参数（此处为空表示验证时不使用数据增强）
+    val_dataset = datasets.ETH3D(aug_params) # 加载ETH3D验证数据集
+
+    # 初始化指标存储列表
     out_list, epe_list = [], []
+
+    # 遍历验证集中的每个样本
     for val_id in range(len(val_dataset)):
+        # 获取当前样本数据：文件路径、左右视图、真值视差、有效区域掩码
+        # imageL_file, imageR_file, GT_file are file path
+        # image1, image2 预处理后的图片
+        # flow_gt 真值视差图（Disparity Ground Truth）
+        # valid_gt 有效区域掩码（Valid Mask） 值为0或1，用于评估数据集该像素点的视差真实值是否可靠
         (imageL_file, imageR_file, GT_file), image1, image2, flow_gt, valid_gt = val_dataset[val_id]
-        image1 = image1[None].cuda()
+        # 将图像数据送入GPU并增加批次维度（batch_size=1）
+        image1 = image1[None].cuda() # 实际[1, 3, 489, 942]
         image2 = image2[None].cuda()
 
+        # 图像填充对齐（确保尺寸能被32整除，适配模型下采样次数）
         padder = InputPadder(image1.shape, divis_by=32)
-        image1, image2 = padder.pad(image1, image2)
+        image1, image2 = padder.pad(image1, image2) # [1, 3, 489, 942] -> [1, 3, 512, 960]
+
+        # 模型推理阶段（禁用梯度计算）
         with torch.no_grad():
+            # 混合精度上下文（自动选择float32/float16计算）
             with autocast(enabled=mixed_prec):
+                # 模型前向传播，得到预测视差图（flow_pr）
                 flow_pr = model(image1, image2, iters=iters, test_mode=True)
 
+        # 后处理：移除填充区域 + 转CPU + 去除批次维度
         flow_pr = padder.unpad(flow_pr.float()).cpu().squeeze(0)
+        # 验证预测与真值尺寸一致性
         assert flow_pr.shape == flow_gt.shape, (flow_pr.shape, flow_gt.shape)
+        # 计算端点误差EPE（End-Point Error）
         epe = torch.sum((flow_pr - flow_gt)**2, dim=0).sqrt()
+        epe_flattened = epe.flatten() # 展平为1维向量
 
-        epe_flattened = epe.flatten()
-
+        # 加载遮挡区域掩码（无效区域过滤）
+        # 掩码文件路径替换逻辑：disp0GT.pfm → mask0nocc.png
         occ_mask = Image.open(GT_file.replace('disp0GT.pfm', 'mask0nocc.png'))
+        occ_mask = np.ascontiguousarray(occ_mask).flatten() # 转为连续数组并展平
 
-        occ_mask = np.ascontiguousarray(occ_mask).flatten()
-
+        # 构建有效区域掩码（valid_gt >=0.5 且 非遮挡区域）
         val = (valid_gt.flatten() >= 0.5) & (occ_mask == 255)
+        # 若不使用遮挡掩码的版本（注释备用）:
         # val = (valid_gt.flatten() >= 0.5)
+
+        # 计算D1指标（误差超过1像素视为错误）
         out = (epe_flattened > 1.0)
-        image_out = out[val].float().mean().item()
-        image_epe = epe_flattened[val].mean().item()
+        image_out = out[val].float().mean().item() # 错误像素占比
+        image_epe = epe_flattened[val].mean().item() # 平均EPE
+
+        # 记录当前样本指标
         logging.info(f"ETH3D {val_id+1} out of {len(val_dataset)}. EPE {round(image_epe,4)} D1 {round(image_out,4)}")
         epe_list.append(image_epe)
         out_list.append(image_out)
 
+    # 计算整体指标
     epe_list = np.array(epe_list)
     out_list = np.array(out_list)
 
-    epe = np.mean(epe_list)
-    d1 = 100 * np.mean(out_list)
+    epe = np.mean(epe_list) # 平均端点误差
+    d1 = 100 * np.mean(out_list) # D1错误率（百分比形式）
 
+    # 打印汇总结果
     print("Validation ETH3D: EPE %f, D1 %f" % (epe, d1))
+    # 返回指标字典（可用于超参优化或模型比较）
     return {'eth3d-epe': epe, 'eth3d-d1': d1}
 
 

@@ -1,31 +1,83 @@
-wandb: {}
-project_name: 
-restore_ckpt: "./sceneflow.pth"
+wandb: # Weights & Biases配置（{}空表示未启用）
+  entity: "992262955-east-china-normal-university" # 团队/个人账户名
+  project: "test"
+  tags: ["stereo", "monster"]
+  notes: "monster cvpr 2025"
+#    # 必填参数
+#    entity: "my-research-team"   # 团队/个人账户名（需提前创建）
+#    project: "stereo-depth"      # 项目名称（自动创建）
+#
+#    # 可选参数
+#    tags: ["stereo", "eth3d"]    # 实验标签（分类/检索用）
+#    notes: "Baseline experiment with VIT-L encoder"  # 实验备注
+#    mode: "online"               # 在线模式（默认）/"offline"（本地记录）
+#    dir: "./wandb_logs"          # 离线模式存储路径（仅mode=offline生效）
+#
+#    # 高级参数
+#    group: "ablation-study"      # 实验分组（对比实验用）
+#    job_type: "train"            # 任务类型（train/eval等）
+#    resume: "allow"              # 断点续传策略（allow/never/must）
+project_name:  # 实验项目名称
+restore_ckpt: "./sceneflow.pth" # 预训练权重路径（用于迁移学习）
 # restore_ckpt: "/data2/cjd/mono_fusion/checkpoints/sceneflow.pth"
-logdir: './checkpoints/eth3d/'
-encoder: 'vitl'
-batch_size: 12
-train_datasets: ['eth3d_finetune']
-lr: 1e-4
-wdecay: 1e-5
-total_step: 100000
-save_frequency: 2500
-save_path: './checkpoints/eth3d/'
-val_frequency: 2500
-image_size: [320, 736]
-train_iters: 21
-valid_iters: 32
-val_dataset: 'kitti'
-corr_implementation: "reg"
-corr_levels: 2
-corr_radius: 4
-n_downsample: 2
-n_gru_layers: 3
-hidden_dims: [128, 128, 128]
-max_disp: 192
-saturation_range: [0.0, 1.4]
-do_flip: False
-spatial_scale: [-0.2, 0.4]
-noyjitter: True
-num_gpu: 4
-seed: 666
+logdir: './checkpoints/eth3d/' # 训练日志和模型保存目录
+encoder: 'vitl' # 主干编码器类型（ViT-Large）
+batch_size: 12  # 每个GPU的批大小（实际batch=12 * 4GPU=48）
+train_datasets: ['eth3d_finetune'] # 训练集名称列表
+lr: 1e-4 # 初始学习率（基础学习率）
+wdecay: 1e-5 # 权重衰减系数（L2正则化强度）
+total_step: 100000 # 总训练步数
+save_frequency: 2500 # 模型保存间隔（每2500步保存一次）
+save_path: './checkpoints/eth3d/' # 模型检查点保存路径
+val_frequency: 2500 # 验证间隔（每2500步验证一次）
+image_size: [320, 736] # 输入图像尺寸（高度，宽度） 训练？
+train_iters: 21 # 前向传播迭代次数（循环网络特性）
+valid_iters: 32 # 验证时的前向传播迭代次数
+val_dataset: 'kitti' # 验证集名称（KITTI基准）
+corr_implementation: "reg" # 相关性计算实现方式（正则化方法）
+corr_levels: 2 # 相关性金字塔层级数
+corr_radius: 4 # 相关性计算的邻域半径（像素单位）
+n_downsample: 2 # 特征金字塔下采样次数
+n_gru_layers: 3 # GRU模块的堆叠层数
+hidden_dims: [128, 128, 128] # GRU各层的隐藏层维度
+max_disp: 192 # 最大视差范围（立体匹配关键参数）
+saturation_range: [0.0, 1.4] # 饱和度增强范围（0-140%）
+do_flip: False # 是否启用水平翻转（此处禁用）
+spatial_scale: [-0.2, 0.4] # 空间缩放范围（-20%到+40%）
+noyjitter: True # 禁用颜色抖动（no YUV jitter）
+num_gpu: 1 # 使用的GPU数量
+seed: 666 # 随机种子（保证实验可复现性）
+
+#验证数据集
+#实时性能监测
+#作用：在训练过程中定期评估模型在未见数据上的表现
+#示例：
+#yaml
+#val_frequency: 2500  # 每训练2500步验证一次
+#val_dataset: 'kitti' # 使用KITTI数据集验证
+#原理：
+#模型在ETH3D训练集上表现好 ≠ 真实场景有效，验证集如同"期中考试"反映泛化能力
+#防止过拟合 (Overfitting)
+#检测机制：
+#✅ 训练误差持续下降 + 验证误差上升 → 过拟合警报
+#✅ 训练/验证误差同步下降 → 模型健康学习
+#您的配置关联：
+#yaml
+#train_datasets: ['eth3d_finetune']  # 训练集
+#val_dataset: 'kitti'                # 跨数据集验证
+#当模型在ETH3D上表现良好，但在KITTI上性能下降时，说明模型过度适应了ETH3D的特性
+#超参数调优
+#决策依据：
+#通过验证集表现选择最佳模型配置（如学习率、正则化强度等）
+#示例场景：
+#比较 lr: 1e-4 vs lr: 2e-4 两种配置在验证集上的效果，选择更优者
+#早停机制 (Early Stopping)
+#实现逻辑：
+#当验证集指标连续N次未改善时自动终止训练，避免无效计算
+#您的配置支持：
+#虽然未直接配置早停，但通过 val_frequency 的监测可实现类似效果
+#早停机制 (Early Stopping)
+#实现逻辑：
+#当验证集指标连续N次未改善时自动终止训练，避免无效计算
+#您的配置支持：
+#虽然未直接配置早停，但通过 val_frequency 的监测可实现类似效果

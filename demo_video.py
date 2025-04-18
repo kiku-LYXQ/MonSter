@@ -7,9 +7,9 @@ import numpy as np
 import torch
 from tqdm import tqdm
 from pathlib import Path
-from monster import Monster 
+from core.monster import Monster
 
-from utils.utils import InputPadder
+from core.utils.utils import InputPadder
 from PIL import Image
 from matplotlib import pyplot as plt
 import os

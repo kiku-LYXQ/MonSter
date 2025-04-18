@@ -227,7 +227,7 @@ def writeFlowKITTI(filename, uv):
     cv2.imwrite(filename, uv[..., ::-1])
     
 
-def read_gen(file_name, pil=False):
+def read_gen(file_name, pil=False): # 根据不同的文件返回不同的格式
     ext = splitext(file_name)[-1]
     if ext == '.png' or ext == '.jpeg' or ext == '.ppm' or ext == '.jpg':
         return Image.open(file_name)
