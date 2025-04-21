@@ -9,7 +9,7 @@ restore_ckpt: "./sceneflow.pth"
 # restore_ckpt: "/data2/cjd/mono_fusion/checkpoints/sceneflow.pth"
 logdir: './checkpoints/kitti/'
 encoder: 'vitl'
-batch_size: 2
+batch_size: 1
 train_datasets: ['kitti']
 lr: 1e-4
 wdecay: 1e-5

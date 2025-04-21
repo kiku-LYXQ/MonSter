@@ -175,12 +175,14 @@ def main(cfg):
                     model_save = accelerator.unwrap_model(model)
                     torch.save(model_save.state_dict(), save_path)
                     del model_save
-        
+
+            # todo: bug here
+            # total_step = 2000
             if (total_step > 0) and (total_step % cfg.val_frequency == 0):
 
                 model.eval()
                 elem_num, total_epe, total_out = 0, 0, 0
-                for data in tqdm(val_loader, dynamic_ncols=True, disable=not accelerator.is_main_process):
+                for data in tqdm(val_loader, dynamic_ncols=True, disable=not accelerator.is_main_process): # disable这里是主进程显示进度条，非主进程隐藏进度条，和for
                     _, left, right, disp_gt, valid = [x for x in data]
                     padder = InputPadder(left.shape, divis_by=32)
                     left, right = padder.pad(left, right)
@@ -188,16 +190,51 @@ def main(cfg):
                         disp_pred = model(left, right, iters=cfg.valid_iters, test_mode=True)
                     disp_pred = padder.unpad(disp_pred)
                     assert disp_pred.shape == disp_gt.shape, (disp_pred.shape, disp_gt.shape)
-                    epe = torch.abs(disp_pred - disp_gt)
+
+                    # 旧版本代码
+                    # epe = torch.abs(disp_pred - disp_gt)
+                    # # print(f"epe shape (before aggregation): {epe.shape}")  # 预期: [1,1,H,W]
+                    # out = (epe > 1.0).float()
+                    # epe = torch.squeeze(epe, dim=1)
+                    # # print(f"epe shape (before aggregation): {epe.shape}")  # 预期: [1,H,W]
+                    # out = torch.squeeze(out, dim=1)
+                    # # epe, out = accelerator.gather_for_metrics((epe[valid >= 0.5].mean(), out[valid >= 0.5].mean()))
+                    # epe, out = accelerator.gather_for_metrics((epe[valid >= 0.5], out[valid >= 0.5]))
+                    # # print(f"epe shape (before aggregation): {epe.shape}")  # 预期: 变成一维数组
+                    # elem_num += epe.shape[0] # 实际0+epe.shape[0]
+                    # for i in range(epe.shape[0]):
+                    #     total_epe += epe[i]
+                    #     total_out += out[i]
+                    # accelerator.log({'val/epe': total_epe / elem_num, 'val/d1': 100 * total_out / elem_num}, total_step)
+
+                    # 1. 计算误差张量（保持原始维度）
+                    epe = torch.abs(disp_pred - disp_gt)  # 形状 [1, C, H, W]（如 [1,1,H,W]）
                     out = (epe > 1.0).float()
+
+                    # 2. 降维为（b, h, w） 因为掩码为B，H，W
                     epe = torch.squeeze(epe, dim=1)
                     out = torch.squeeze(out, dim=1)
-                    epe, out = accelerator.gather_for_metrics((epe[valid >= 0.5].mean(), out[valid >= 0.5].mean()))
-                    elem_num += epe.shape[0]
-                    for i in range(epe.shape[0]):
-                        total_epe += epe[i]
-                        total_out += out[i]
-                    accelerator.log({'val/epe': total_epe / elem_num, 'val/d1': 100 * total_out / elem_num}, total_step)
+
+                    # 3. 筛选有效区域（保持张量）
+                    valid_mask = (valid >= 0.5)   # 增加视差有效性检查 valid有效性张量[1, H, W] valid >= 0.5 每个像素点的有效性大于0，返回值为和valid一样形状的值
+                    epe_valid = epe[valid_mask]  # 形状 [N]
+                    out_valid = out[valid_mask]  # 形状 [N]
+
+                    # 4. 跨进程收集数据（输入为张量）
+                    epe_gathered, out_gathered = accelerator.gather_for_metrics((epe_valid, out_valid))
+
+                    # 5. 仅主进程统计全局指标 avg_epe:平均端点误差（预测视差与真实视差的平均值）， avg_d1视差误差超过1像素点的比例
+                    if accelerator.is_main_process:
+                        elem_num += epe_gathered.numel()  # 总样本数 = 所有进程的有效样本总和
+                        total_epe += epe_gathered.sum().item()
+                        total_out += out_gathered.sum().item()
+                        accelerator.log({'val/epe': total_epe / elem_num, 'val/d1': 100 * total_out / elem_num}, total_step) # 每个batch_size统计一次
+
+                # 6 主进程统一记录最终指标
+                if accelerator.is_main_process and elem_num > 0:
+                    avg_epe = total_epe / elem_num
+                    avg_d1 = 100 * total_out / elem_num
+                    accelerator.log({'finally: val/epe': avg_epe, 'val/d1': avg_d1}, total_step) # 最后统计一次，会和上面的最后一次一样
 
                 model.train()
                 # model.module.freeze_bn()

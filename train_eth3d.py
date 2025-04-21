@@ -271,7 +271,7 @@ def main(cfg):
                 accelerator.log({"disp_gt": wandb.Image(disp_gt_np, caption="step:{}".format(total_step))}, total_step)
                 accelerator.log({"depth_mono": wandb.Image(depth_mono_np, caption="step:{}".format(total_step))}, total_step)
 
-            # 模型保存（每2500步）
+            # 模型保存（eth3d每2500步,kitti 2000步）
             if (total_step > 0) and (total_step % cfg.save_frequency == 0):
                 if accelerator.is_main_process:
                     save_path = Path(cfg.save_path + '/%d.pth' % (total_step))
@@ -301,7 +301,7 @@ def main(cfg):
                     # 跨设备聚合指标
                     epe, out = accelerator.gather_for_metrics((epe[valid >= 0.5].mean(), out[valid >= 0.5].mean()))
 
-                    # 累计统计
+                    # 累计统计 从验证开始到结束的统计
                     elem_num += epe.shape[0]
                     for i in range(epe.shape[0]):
                         total_epe += epe[i]
@@ -309,7 +309,7 @@ def main(cfg):
                     # 记录验证指标
                     # 'val/epe': total_epe / elem_num,  # 平均端点误差
                     # 'val/d1': 100 * total_out / elem_num  # 错误率百分比
-                    accelerator.log({'val/epe': total_epe / elem_num, 'val/d1': 100 * total_out / elem_num}, total_step)
+                    accelerator.log({'val/epe': total_epe / elem_num, 'val/d1': 100 * total_out / elem_num}, total_step) # 每个batch_size会统计一次
 
                 model.train()
                 model.module.freeze_bn()
