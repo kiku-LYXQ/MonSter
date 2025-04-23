@@ -47,7 +47,8 @@ class DPTHead(nn.Module):
         super(DPTHead, self).__init__()
         
         self.use_clstoken = use_clstoken
-        
+
+        # 生成四个独立的project，每个独立的project的输出通道都不同，根据实际情况使用具体第几个project
         self.projects = nn.ModuleList([
             nn.Conv2d(
                 in_channels=in_channels,
@@ -58,8 +59,8 @@ class DPTHead(nn.Module):
             ) for out_channel in out_channels
         ])
         
-        self.resize_layers = nn.ModuleList([
-            nn.ConvTranspose2d(
+        self.resize_layers = nn.ModuleList([          # 也是个列表，按照情况选择其中具体哪一个使用
+            nn.ConvTranspose2d(                       # 转置卷积层，上采样使用，不同的kernel_size相当于放大不同的倍数
                 in_channels=out_channels[0],
                 out_channels=out_channels[0],
                 kernel_size=4,
@@ -71,7 +72,7 @@ class DPTHead(nn.Module):
                 kernel_size=2,
                 stride=2,
                 padding=0),
-            nn.Identity(),
+            nn.Identity(), # 恒等层，对输入不做任何处理，具体为什么呢，不知道
             nn.Conv2d(
                 in_channels=out_channels[3],
                 out_channels=out_channels[3],
@@ -116,16 +117,25 @@ class DPTHead(nn.Module):
     
     def forward(self, out_features, patch_h, patch_w, only_feat=False):
         out = []
+        # 在deepanythingv2中的decoder中只用了vit的[B, N, D]特征输出
         for i, x in enumerate(out_features):
             if self.use_clstoken:
                 x, cls_token = x[0], x[1]
                 readout = cls_token.unsqueeze(1).expand_as(x)
                 x = self.readout_projects[i](torch.cat((x, readout), -1))
             else:
-                x = x[0]
-            
+                x = x[0] # 实际用了这段代码
+
+            # [B, N, D] -> [B, D, N] -> [B, D, patch_h, patch_w]
+            # 炫耀先permute的原因：N一般代表图像块的总数，D这一列代表每个图像块的特征维度（特征向量）
+            #                   x一般是按照行优先存储，越右就越临近
+            #                   reshape分割是行优先分割，我们希望分割的是N，序列（或块）的存放形状，而非将特征分割
+            #                   所以需要先permute再reshape
             x = x.permute(0, 2, 1).reshape((x.shape[0], x.shape[-1], patch_h, patch_w))
-            x = self.projects[i](x)
+
+            # [256, 512, 1024, 1024]
+            # projects[i] 的输出张量的通道数量对应上面4个
+            x = self.projects[i](x) # [B, D, patch_h, patch_w] -> [B, C, patch_h, patch_w] 应该相当于特征通道调整吧
             x = self.resize_layers[i](x)
             
             out.append(x)
@@ -176,7 +186,12 @@ class DPTHead_decoder(nn.Module):
         super(DPTHead_decoder, self).__init__()
         
         self.use_clstoken = use_clstoken
-        
+
+        ###################################################################
+        # 特征通道数对齐模块
+        # 作用：将不同阶段特征图的通道数映射到目标维度（out_channels）
+        # 结构：四个独立的1x1卷积层，用于通道数调整
+        ###################################################################
         self.projects = nn.ModuleList([
             nn.Conv2d(
                 in_channels=in_channels,
@@ -245,6 +260,7 @@ class DPTHead_decoder(nn.Module):
     
     def forward(self, out_features, patch_h, patch_w):
         out = []
+        # 遍历四个不同的特征图
         for i, x in enumerate(out_features):
             if self.use_clstoken:
                 x, cls_token = x[0], x[1]
@@ -276,6 +292,10 @@ class DPTHead_decoder(nn.Module):
         # path_2 = self.scratch.refinenet2(path_3, layer_2_rn, size=layer_1_rn.shape[2:])
         # path_1 = self.scratch.refinenet1(path_2, layer_1_rn)
 
+        # todo:why
+        # 具体来讲呢就是depth_anything_decoder中的depth_head_decoder是输出同层的分辨率大小，然后经过手动上采样
+        # 就是refinenet是内部特征的融合，上采样是为了保留感受野较小的特征信息，而是否上采样也是和DPTHead的区别
+        # 然后就是DPTHead只是前馈特征
         path_4 = self.scratch.refinenet4(layer_4_rn, size=layer_4_rn.shape[2:])
         up_path_4 = F.interpolate(path_4, size=layer_3_rn.shape[2:], mode='bilinear', align_corners=True)  
         path_3 = self.scratch.refinenet3(up_path_4, layer_3_rn, size=layer_3_rn.shape[2:])
@@ -305,7 +325,7 @@ class DPTHead_decoder(nn.Module):
             
         #     return out, [layer_4, layer_3, layer_2, layer_1]
 
-
+# 原版DepthAnythingV2实现
 class DepthAnythingV2(nn.Module):
     def __init__(
         self, 
@@ -392,7 +412,7 @@ class DepthAnythingV2(nn.Module):
         
         return image, (h, w)
 
-
+# 只留下了DepthAnythingV2的decoder模块，在具体使用的时候只用了DPTHead_decoder这个层的结构，连forward的两个方法都没用
 class DepthAnythingV2_decoder(nn.Module):
     def __init__(
         self, 

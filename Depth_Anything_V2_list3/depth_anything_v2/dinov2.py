@@ -305,9 +305,16 @@ class DinoVisionTransformer(nn.Module):
         if self.chunked_blocks:
             outputs = self._get_intermediate_layers_chunked(x, n)
         else:
-            outputs = self._get_intermediate_layers_not_chunked(x, n)
+            outputs = self._get_intermediate_layers_not_chunked(x, n) # 实际跑的这个代码
         if norm:
             outputs = [self.norm(out) for out in outputs]
+        # 在deepanythingv2中vitl中，outputs是一个列表，列表中有4个元素，每个元素形状是[B, N+1, D]，其中N是序列长度，由class token，图像块tokens以及其它可选的tokens构成，D是特征的维度
+        # class token [B, D] 一般用于分类头的输入，大概里面保存更多的用于分类的特征吧
+        # 大致输出的outputs [B, N, D] 可以这么理解
+        # 浅层特征（前几个块组）：捕捉局部细节（如边缘、纹理），适用于高分辨率重建。
+        # 中层特征：平衡局部和全局信息。
+        # 深层特征（后几个块组）：编码全局语义（如物体类别、场景结构），适用于分类或深度估计。
+        # 极深层特征：高度抽象的语义表示。
         class_tokens = [out[:, 0] for out in outputs]
         outputs = [out[:, 1 + self.num_register_tokens:] for out in outputs]
         if reshape:
@@ -394,7 +401,7 @@ def vit_giant2(patch_size=16, num_register_tokens=0, **kwargs):
     )
     return model
 
-
+# 字符串：函数，函数返回的是一个模型实例，所以这里返回的也是模型实例
 def DINOv2(model_name):
     model_zoo = {
         "vits": vit_small, 
@@ -402,7 +409,8 @@ def DINOv2(model_name):
         "vitl": vit_large, 
         "vitg": vit_giant2
     }
-    
+
+    # 返回模型实例
     return model_zoo[model_name](
         img_size=518,
         patch_size=14,

@@ -204,6 +204,7 @@ class Feat_transfer(nn.Module):
         features_mono_list = []
         feat_32x = self.conv32x(features[3])
         feat_32x_up = self.conv_up_32x(feat_32x)
+        # 1x1卷积features[2],然后加上features[2], feat_32x_up的拼接再卷积一次，最后的卷积只是为了获取感受野范围内的特征向量
         feat_16x = self.conv16x(torch.cat((features[2], feat_32x_up), 1)) + self.res_16x(features[2])
         feat_16x_up = self.conv_up_16x(feat_16x)
         feat_8x = self.conv8x(torch.cat((features[1], feat_16x_up), 1)) + self.res_8x(features[1])
@@ -249,7 +250,7 @@ class Monster(nn.Module):
         self.feat_transfer_cnet = Feat_transfer_cnet(dim_list, output_dim=args.hidden_dims[0])
 
 
-        self.stem_2 = nn.Sequential(
+        self.stem_2 = nn.Sequential( # 一般来说一个卷积后加一个归一化比较好，目的是为了防止梯度爆炸
             BasicConv_IN(3, 32, kernel_size=3, stride=2, padding=1),
             nn.Conv2d(32, 32, 3, 1, 1, bias=False),
             nn.InstanceNorm2d(32), nn.ReLU()
@@ -297,9 +298,14 @@ class Monster(nn.Module):
         # state_dict_dpt = torch.load(f'/home/cjd/cvpr2025/fusion/Depth_Anything_V2_list3/depth_anything_v2_{args.encoder}.pth', map_location='cpu')
         depth_anything.load_state_dict(state_dict_dpt, strict=True)
         depth_anything_decoder.load_state_dict(state_dict_dpt, strict=False)
-        self.mono_encoder = depth_anything.pretrained
-        self.mono_decoder = depth_anything.depth_head
-        self.feat_decoder = depth_anything_decoder.depth_head
+
+        # 下面两层是DepthAnythingV2的主要结构，论文自己说为了momo模块
+        self.mono_encoder = depth_anything.pretrained # 返回的是DinoVisionTransformer的模型实例，已经加载权重那种实例 论文默认vitl
+        self.mono_decoder = depth_anything.depth_head # 返回的是depth_head的模型实例，，已经加载权重那种实例
+
+        # 具体来讲呢就是depth_anything_decoder中的depth_head_decoder是输出同层的分辨率大小，然后经过手动上采，样DPTHead只是前馈特征
+        self.feat_decoder = depth_anything_decoder.depth_head # 返回的是depth_head_decoder的模型实例，需要训练权重那种实例，和上面不同的是去掉和修改了输出附近的一些层
+
         self.mono_encoder.requires_grad_(False)
         self.mono_decoder.requires_grad_(False)
 
@@ -317,16 +323,36 @@ class Monster(nn.Module):
         self.std = torch.tensor(std)
 
     def infer_mono(self, image1, image2):
-        height_ori, width_ori = image1.shape[2:]
-        resize_image1 = F.interpolate(image1, scale_factor=14 / 16, mode='bilinear', align_corners=True)
+        """
+
+        Args:
+            image1:
+            image2:
+
+        Returns:
+
+        """
+        height_ori, width_ori = image1.shape[2:] # 获取原始高宽 [H, W]
+
+        # 图像尺寸预处理 ---------------------------------------------------------------
+        # 将输入图像缩放到14/16倍（适配DinoViT的14x14 patch处理）
+        resize_image1 = F.interpolate(image1, scale_factor=14 / 16, mode='bilinear', align_corners=True) # 输出：[B, C, H*14/16, W*14/16]
         resize_image2 = F.interpolate(image2, scale_factor=14 / 16, mode='bilinear', align_corners=True)
 
-        patch_h, patch_w = resize_image1.shape[-2] // 14, resize_image1.shape[-1] // 14
+        # 计算patch网格划分 ----------------------------------------------------------
+        patch_h, patch_w = resize_image1.shape[-2] // 14, resize_image1.shape[-1] // 14 # 垂直方向patch数量 (H_scaled // patch_size) 水平方向patch数量 (W_scaled // patch_size)
+
+        # 特征编码阶段 ---------------------------------------------------------------
+        # 通过单目编码器提取中间层特征（使用预定义的关键层索引）
+        # features_left_encoder: 包含各层特征及class token的列表，列表中有四个元素，每个元素中的第一个元素是特征输出[B, N, D]，第二个是class token [B, D]
         features_left_encoder = self.mono_encoder.get_intermediate_layers(resize_image1, self.intermediate_layer_idx[self.args.encoder], return_class_token=True)
         features_right_encoder = self.mono_encoder.get_intermediate_layers(resize_image2, self.intermediate_layer_idx[self.args.encoder], return_class_token=True)
         depth_mono = self.mono_decoder(features_left_encoder, patch_h, patch_w)
         depth_mono = F.relu(depth_mono)
+        # 保证缩放回原始图像宽高，方便后续统计
         depth_mono = F.interpolate(depth_mono, size=(height_ori, width_ori), mode='bilinear', align_corners=False)
+
+        # 利用depth_head的模型实例提取左右不同视野的深度特征图（带上采样）
         features_left_4x, features_left_8x, features_left_16x, features_left_32x = self.feat_decoder(features_left_encoder, patch_h, patch_w)
         features_right_4x, features_right_8x, features_right_16x, features_right_32x = self.feat_decoder(features_right_encoder, patch_h, patch_w)
 
@@ -363,11 +389,15 @@ class Monster(nn.Module):
 
         scale_factor = 0.25
         size = (int(depth_mono.shape[-2] * scale_factor), int(depth_mono.shape[-1] * scale_factor))
+        disp_mono_4x = F.interpolate(depth_mono, size=size, mode='bilinear', align_corners=False) # 4倍下采样
 
-        disp_mono_4x = F.interpolate(depth_mono, size=size, mode='bilinear', align_corners=False)
-
+        # feat_transfer多尺度特征融合模块, 构建金字塔特征集合
+        # todo: features_mono_left和features_mono_right都是原图大小的1/32, 1/16, 1/8, and 1/4信息还要进行特征融合？
+        # 在原始的DepthHead中，最终的特征输出只是一个前馈来获得不同视野的特征图，就是小感受野的没有大感受野的信息广，所以做个FNN金字塔提取特征信息
         features_left = self.feat_transfer(features_mono_left)
         features_right = self.feat_transfer(features_mono_right)
+
+        # 论文里这里说的不是很明确，猜测目的和残差思想差不多，保留一些图片的原始特征，不同的是，这里只是cat拼接特征维度，而非加法，应该是小小的涨点方法吧
         stem_2x = self.stem_2(image1)
         stem_4x = self.stem_4(stem_2x)
         stem_8x = self.stem_8(stem_4x)
@@ -376,7 +406,7 @@ class Monster(nn.Module):
         stem_4y = self.stem_4(stem_2y)
 
         stem_x_list = [stem_16x, stem_8x, stem_4x]
-        features_left[0] = torch.cat((features_left[0], stem_4x), 1)
+        features_left[0] = torch.cat((features_left[0], stem_4x), 1) # 和
         features_right[0] = torch.cat((features_right[0], stem_4y), 1)
 
         match_left = self.desc(self.conv(features_left[0]))

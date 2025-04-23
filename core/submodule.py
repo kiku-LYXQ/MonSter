@@ -152,8 +152,8 @@ def groupwise_correlation(fea1, fea2, num_groups):
     B, C, H, W = fea1.shape
     assert C % num_groups == 0
     channels_per_group = C // num_groups
-    cost = (fea1 * fea2).view([B, num_groups, channels_per_group, H, W]).mean(dim=2)
-    assert cost.shape == (B, num_groups, H, W)
+    cost = (fea1 * fea2).view([B, num_groups, channels_per_group, H, W]).mean(dim=2) # fea1 * fea2 在内存是连续存储的，而且C % num_groups == 0，使用view不会触发其它开销，而reshape有拷贝开销等等
+    assert cost.shape == (B, num_groups, H, W) # 可以把num_groups这个维度看作压缩后的特征向量
     return cost
 
 def build_gwc_volume(refimg_fea, targetimg_fea, maxdisp, num_groups):
@@ -244,7 +244,7 @@ def context_upsample(disp_low, up_weights):
     # sp (b,9,4*h,4*w)
     ###
     b, c, h, w = disp_low.shape
-        
+
     disp_unfold = F.unfold(disp_low.reshape(b,c,h,w),3,1,1).reshape(b,-1,h,w)
     disp_unfold = F.interpolate(disp_unfold,(h*4,w*4),mode='nearest').reshape(b,9,h*4,w*4)
 
