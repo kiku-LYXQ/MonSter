@@ -202,7 +202,7 @@ def build_correlation_volume(refimg_fea, targetimg_fea, maxdisp):
     return volume
 
 
-
+# 本工程没怎么用到
 def build_concat_volume(refimg_fea, targetimg_fea, maxdisp):
     B, C, H, W = refimg_fea.shape
     volume = refimg_fea.new_zeros([B, 2 * C, maxdisp, H, W])

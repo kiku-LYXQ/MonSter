@@ -31,7 +31,14 @@ class ConvGRU(nn.Module):
         self.convq = nn.Conv2d(hidden_dim+input_dim, hidden_dim, kernel_size, padding=kernel_size//2)
 
     def forward(self, h, cz, cr, cq, *x_list):
-
+        # cz 是更新门的偏置/上下文参数
+        # cr 是重置门的偏置/上下文参数
+        # cq 是候选状态的偏置/上下文参数
+        # 为何不用 [0, 1]，而用tanh：
+        # 丢失负值信息，导致隐藏状态无法动态调整（例如抑制无效特征）。
+        # 非对称范围可能使门控机制偏向某一方向（如始终保留或遗忘信息），降低模型灵活性。
+        # 门控r，z为何是[0, 1]
+        # 用于决定多少信息来自旧或新
         x = torch.cat(x_list, dim=1)
         hx = torch.cat([h, x], dim=1)
         z = torch.sigmoid(self.convz(hx) + cz)
@@ -117,39 +124,87 @@ class BasicMultiUpdateBlock(nn.Module):
     def __init__(self, args, hidden_dims=[]):
         super().__init__()
         self.args = args
-        self.encoder = BasicMotionEncoder(args)
-        encoder_output_dim = 128
 
+        # ----------------- 核心组件初始化 -----------------
+        # 运动编码器：将视差(disp)和相关体积(corr)编码为运动特征
+        self.encoder = BasicMotionEncoder(args)
+        encoder_output_dim = 128 # 编码器输出维度（运动特征维度）
+
+        # ----------------- 多层级GRU定义 -----------------
+        # GRU层级说明（04/08/16表示下采样倍数）：
+        # - gru16: 处理最低分辨率（16x下采样）的特征，捕捉全局上下文
+        # - gru08: 处理中间分辨率（8x下采样）的特征，衔接高低层信息
+        # - gru04: 处理高分辨率（4x下采样）的特征，生成局部细节修正
+
+        # GRU04: 输入维度=hidden_dims[2]，输出维度=运动特征+高层特征（若层数>1）
         self.gru04 = ConvGRU(hidden_dims[2], encoder_output_dim + hidden_dims[1] * (args.n_gru_layers > 1))
+        # GRU08: 输入维度=hidden_dims[1]，输出维度=低层特征（若层数==3） + 高层特征
         self.gru08 = ConvGRU(hidden_dims[1], hidden_dims[0] * (args.n_gru_layers == 3) + hidden_dims[2])
+        # GRU16: 输入维度=hidden_dims[0]，输出维度=hidden_dims[1]
         self.gru16 = ConvGRU(hidden_dims[0], hidden_dims[1])
+
+        # ----------------- 输出头定义 -----------------
+        # 视差预测头：从最高分辨率隐藏状态预测delta_disp
         self.disp_head = DispHead(hidden_dims[2], hidden_dim=256, output_dim=1)
         factor = 2**self.args.n_downsample
 
+        # 上采样掩码生成模块：将gru04的输出转换为32通道掩码
         self.mask_feat_4 = nn.Sequential(
             nn.Conv2d(hidden_dims[2], 32, 3, padding=1),
             nn.ReLU(inplace=True))
 
     def forward(self, net, inp, corr=None, disp=None, iter04=True, iter08=True, iter16=True, update=True):
+        """
+                前向传播：多层级GRU迭代更新
 
+                Args:
+                    net (list): 多层级隐藏状态 [net16, net08, net04]，初始为feat_transfer_cnet的输出
+                    inp (list): 多层级输入特征 [inp16, inp08, inp04]
+                    corr (Tensor): 相关性体积，形状(B,H,W,1,W2)
+                    disp (Tensor): 当前视差图，形状(B,1,H,W)
+                    iter04/iter08/iter16 (bool): 控制是否更新对应层级的GRU
+                    update (bool): 是否生成delta_disp
+
+                Returns:
+                    net (list): 更新后的隐藏状态列表
+                    mask_feat_4 (Tensor): 上采样掩码特征，形状(B,32,H,W)
+                    delta_disp (Tensor): 视差修正量，形状(B,1,H,W)
+        """
+        # ----------------- 层级式GRU更新 -----------------
+        # 更新顺序：从低分辨率到高分辨率（16x -> 8x -> 4x） 不同的分辨率都有自己的隐藏层
+
+        # 1. 更新16x层级的GRU（最低分辨率）
         if iter16:
+            # 输入：net[2] + inp[2]（低层输入，有三个，分别是cz， cr，cq） + pool2x(net[1])（来自8x层的池化特征）
             net[2] = self.gru16(net[2], *(inp[2]), pool2x(net[1]))
+
+        # 2. 更新8x层级的GRU（中间分辨率）
         if iter08:
             if self.args.n_gru_layers > 2:
+                # 输入：inp[1] + pool2x(net[0])（来自4x层的池化） + interp(net[2], net[1])（16x层的上采样）
                 net[1] = self.gru08(net[1], *(inp[1]), pool2x(net[0]), interp(net[2], net[1]))
             else:
+                # 输入：inp[1] + pool2x(net[0])
                 net[1] = self.gru08(net[1], *(inp[1]), pool2x(net[0]))
+
+        # 3. 更新4x层级的GRU（最高分辨率）
         if iter04:
+            # 运动特征编码：将视差和相关体积转换为128维特征
             motion_features = self.encoder(disp, corr)
             if self.args.n_gru_layers > 1:
+                # 输入：inp[0] + motion_features + interp(net[1], net[0])（8x层的上采样）
                 net[0] = self.gru04(net[0], *(inp[0]), motion_features, interp(net[1], net[0]))
             else:
+                # 输入：inp[0] + motion_features
                 net[0] = self.gru04(net[0], *(inp[0]), motion_features)
 
+        # ----------------- 输出生成 -----------------
         if not update:
-            return net
+            return net # 仅返回隐藏状态（用于中间迭代不生成输出）
 
-        delta_disp = self.disp_head(net[0])
+        # 从最高分辨率隐藏状态（net[0]）生成视差修正量
+        delta_disp = self.disp_head(net[0]) # 输出形状(B,1,H,W)
+        # 生成上采样掩码（用于RAFT-style凸上采样）
         mask_feat_4 = self.mask_feat_4(net[0])
         return net, mask_feat_4, delta_disp
 
